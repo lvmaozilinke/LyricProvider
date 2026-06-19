@@ -347,18 +347,37 @@ object Apple : YukiBaseHooker() {
         val rawLyricSb = StringBuilder()
         val translationSb = StringBuilder()
 
+        // 打印歌曲基本信息
+        YLog.debug(tag = AM_TAG, msg = "===== buildLyricInfoJson: ${song.name} by ${song.artist} (${song.id}) =====")
+        YLog.debug(tag = AM_TAG, msg = "  total lines: ${lines.size}")
+
+        var lineIndex = 0
         for (line in lines) {
             val beginMs = line.begin
             val text = line.text ?: continue
             if (text.isBlank()) continue
 
-            // lyric: 逐行 LRC（不拆分，由 rawLyric 控制长句换行）
+            val words = line.words
+            val wordCount = words?.size ?: 0
+            val hasWords = !words.isNullOrEmpty()
+
+            // 打印每行歌词详情
+            YLog.debug(tag = AM_TAG, msg = "  line[$lineIndex] time=${beginMs}ms text=[$text] words=$wordCount")
+            if (hasWords) {
+                val firstWord = words!!.first()
+                val lastWord = words.last()
+                YLog.debug(tag = AM_TAG, msg = "    word[0] text=[${firstWord.text}] begin=${firstWord.begin} end=${firstWord.end}")
+                if (wordCount > 1) {
+                    YLog.debug(tag = AM_TAG, msg = "    word[${wordCount-1}] text=[${lastWord.text}] begin=${lastWord.begin} end=${lastWord.end}")
+                }
+            }
+
+            // lyric: 逐行 LRC
             lyricSb.append("[${formatLrcTime(beginMs)}]$text\n")
 
-            // rawLyric: 逐字 LRC（启用 Bridge 的逐字高亮和长句两行窗口）
-            val words = line.words
-            if (!words.isNullOrEmpty()) {
-                appendRawLyricWords(rawLyricSb, words)
+            // rawLyric: 逐字 LRC
+            if (hasWords) {
+                appendRawLyricWords(rawLyricSb, words!!)
             } else {
                 rawLyricSb.append("[${formatLrcTimeMs(beginMs)}]$text\n")
             }
@@ -368,11 +387,13 @@ object Apple : YukiBaseHooker() {
             if (!translation.isNullOrBlank()) {
                 translationSb.append("[${formatLrcTime(beginMs)}]$translation\n")
             }
+
+            lineIndex++
         }
 
         if (lyricSb.isEmpty()) return ""
 
-        return JSONObject().apply {
+        val result = JSONObject().apply {
             put("songName", song.name ?: "")
             put("artist", song.artist ?: "")
             put("songId", song.id ?: "")
@@ -382,6 +403,12 @@ object Apple : YukiBaseHooker() {
                 put("translationLyric", translationSb.toString().trimEnd())
             }
         }.toString()
+
+        // 打印生成的完整 JSON
+        YLog.debug(tag = AM_TAG, msg = "  lyricInfo JSON length=${result.length}")
+        YLog.debug(tag = AM_TAG, msg = "  lyric length=${lyricSb.length}, rawLyric length=${rawLyricSb.length}")
+
+        return result
     }
 
     /** 写入一组单词的 rawLyric */
