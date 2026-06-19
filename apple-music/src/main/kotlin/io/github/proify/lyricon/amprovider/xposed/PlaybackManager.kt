@@ -19,10 +19,19 @@ object PlaybackManager {
     // 状态追踪
     private var currentSongId: String? = null
 
+    /** 当歌词构建完成并设置到 player 后触发，用于通知外部（如 MediaSession lyricInfo 注入） */
+    var onLyricsReady: ((song: Song) -> Unit)? = null
+
     fun init(remotePlayer: RemotePlayer, requester: LyricRequester) {
         this.player = remotePlayer
         this.lyricRequester = requester
     }
+
+    /** 获取当前正在播放的歌曲 ID（供 MediaSession hook 使用） */
+    fun getCurrentSongId(): String? = currentSongId
+
+    /** 获取当前正在播放的歌曲（含歌词，供 MediaSession lyricInfo 注入使用） */
+    fun getCurrentSong(): Song? = lastSong?.takeIf { currentSongId != null }
 
     /**
      * 当系统切歌或 Metadata 变化时调用
@@ -84,5 +93,9 @@ object PlaybackManager {
     private fun setSong(song: Song?) {
         lastSong = song
         player?.setSong(song)
+        // 当歌词可用时，通知外部更新 MediaSession metadata（用于 ColorOS 锁屏歌词桥接）
+        if (song != null && !song.lyrics.isNullOrEmpty()) {
+            onLyricsReady?.invoke(song)
+        }
     }
 }
