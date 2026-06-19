@@ -48,6 +48,9 @@ object Apple : YukiBaseHooker() {
 
     private var provider: LyriconProvider? = null
 
+    // 云端翻译缓存：云端时间戳 -> 翻译文本（未匹配）
+    private var cloudTranslationRaw: List<Pair<Long, String>> = emptyList()
+
     // MediaSession 引用缓存（用于歌词就绪后重新发布元数据）
     @Volatile
     private var lastMediaSession: MediaSession? = null
@@ -136,6 +139,9 @@ object Apple : YukiBaseHooker() {
 
                 // 委托给 Manager 处理
                 PlaybackManager.onSongChanged(metadata.id)
+
+                // 预取云端翻译（异步）
+                fetchCloudTranslationIfNeeded(mediaMetadata)
             }
         }
     }
@@ -307,6 +313,47 @@ object Apple : YukiBaseHooker() {
     }
 
     /**
+     * 预取云端翻译（异步，非阻塞）。
+     * 当 Apple Music 歌词没有翻译时，从 QQ 音乐搜索翻译。
+     * 翻译就绪后仅存储，下次 buildLyricInfoJson 自动使用。
+     * 不主动触发 republish，避免循环调用导致卡死。
+     */
+    private fun fetchCloudTranslationIfNeeded(metadata: MediaMetadata) {
+        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE) ?: return
+        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: return
+        val id = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID) ?: return
+
+        // 构建临时 Song 对象用于云端搜索
+        val tempSong = Song(id = id, name = title, artist = artist)
+
+        CloudTranslationManager.fetchTranslationAsync(tempSong) { translations ->
+            cloudTranslationRaw = translations
+            if (translations.isNotEmpty()) {
+                YLog.debug(tag = AM_TAG, msg = "Cloud translations stored for: $title, count=${translations.size}")
+                // 不主动触发 republish，下次 metadata 变化时 buildLyricInfoJson 自然会使用新翻译
+            }
+        }
+    }
+
+    /**
+     * 从云端原始翻译列表中，按时间戳匹配最接近的翻译。
+     * 使用宽松容差（500ms），因为 Apple Music 和 QQ 音乐的时间戳可能有较大差异。
+     */
+    private fun findCloudTranslation(targetTime: Long): String? {
+        if (cloudTranslationRaw.isEmpty()) return null
+        var bestDiff = Long.MAX_VALUE
+        var bestTranslation: String? = null
+        for ((cloudTime, translation) in cloudTranslationRaw) {
+            val diff = kotlin.math.abs(cloudTime - targetTime)
+            if (diff < bestDiff && diff <= 500) {
+                bestDiff = diff
+                bestTranslation = translation
+            }
+        }
+        return bestTranslation
+    }
+
+    /**
      * 当歌词异步加载完成后，重新发布当前 MediaSession 元数据。
      * 这会触发 hookMediaSessionForLyricInfo 中的 before-hook，自动注入 lyricInfo。
      */
@@ -382,10 +429,16 @@ object Apple : YukiBaseHooker() {
                 rawLyricSb.append("[${formatLrcTimeMs(beginMs)}]$text\n")
             }
 
-            // translationLyric
+            // translationLyric（优先 Apple Music 自带翻译，回退云端翻译）
             val translation = line.translation
             if (!translation.isNullOrBlank()) {
                 translationSb.append("[${formatLrcTime(beginMs)}]$translation\n")
+            } else {
+                // 回退：从云端原始翻译中按时间戳匹配
+                val cloudTranslation = findCloudTranslation(beginMs)
+                if (!cloudTranslation.isNullOrBlank()) {
+                    translationSb.append("[${formatLrcTime(beginMs)}]$cloudTranslation\n")
+                }
             }
 
             lineIndex++

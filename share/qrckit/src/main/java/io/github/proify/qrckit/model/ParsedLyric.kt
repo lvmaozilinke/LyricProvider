@@ -36,7 +36,7 @@ data class ParsedLyric(
                 end = line.end,
                 duration = line.duration,
                 text = line.text,
-                translation = transIndex.findClosest(line.begin, 50)
+                translation = transIndex.findClosest(line.begin, 200)
                     ?.text.takeUnless {
                         it?.trim() == "//"
                     },
