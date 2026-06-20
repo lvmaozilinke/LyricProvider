@@ -85,6 +85,9 @@ object Apple : YukiBaseHooker() {
     }
 
     private fun initProvider() {
+        // 初始化翻译磁盘缓存
+        CloudTranslationManager.initialize(application)
+
         val helper =
             LyriconFactory.createProvider(
                 context = application,
@@ -136,6 +139,10 @@ object Apple : YukiBaseHooker() {
             after {
                 val mediaMetadata = args[0] as? MediaMetadata ?: return@after
                 val metadata = MediaMetadataCache.putAndGet(mediaMetadata) ?: return@after
+
+                // 切歌时清除上一首歌的云端翻译残留
+                cloudTranslationRaw = emptyList()
+                CloudTranslationManager.cancelSearch()
 
                 // 委托给 Manager 处理
                 PlaybackManager.onSongChanged(metadata.id)
