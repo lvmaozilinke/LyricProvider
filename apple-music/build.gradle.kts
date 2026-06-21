@@ -1,22 +1,17 @@
-/*
+/*  *
  * Copyright 2026 Proify, Tomakino
  * Licensed under the Apache License, Version 2.0
  * http://www.apache.org/licenses/LICENSE-2.0
  */
-
 import com.android.build.api.dsl.ApplicationExtension
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.ksp)
     kotlin("plugin.serialization") version "2.1.21"
 }
-
 configure<ApplicationExtension> {
     namespace = "io.github.proify.lyricon.amprovider"
-    compileSdk {
-        version = release(rootProject.extra.get("compileSdkVersion") as Int)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "io.github.proify.lyricon.amprovider"
@@ -39,7 +34,7 @@ configure<ApplicationExtension> {
 
     buildTypes {
         getByName("debug") {
-            signingConfig = signingConfigs.getByName("release")
+            // 使用默认 debug 签名
         }
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
@@ -64,6 +59,7 @@ configure<ApplicationExtension> {
 
 dependencies {
     implementation(project(":share:extensions-android"))
+    implementation(project(":share:cloudlyric"))
     implementation(libs.lyricon.provider)
     implementation(libs.kotlinx.serialization.json)
 

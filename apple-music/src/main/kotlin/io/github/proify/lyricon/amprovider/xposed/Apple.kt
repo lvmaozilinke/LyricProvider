@@ -55,6 +55,10 @@ object Apple : YukiBaseHooker() {
     @Volatile
     private var cloudTranslationSongKey: String = ""
 
+    // 上次 hookMediaMetadataChange 处理的歌曲标题（独立于 lastMediaMetadata，避免竞态）
+    @Volatile
+    private var lastProcessedTitle: String = ""
+
     // MediaSession 引用缓存（用于歌词就绪后重新发布元数据）
     @Volatile
     private var lastMediaSession: MediaSession? = null
@@ -144,13 +148,13 @@ object Apple : YukiBaseHooker() {
                 val mediaMetadata = args[0] as? MediaMetadata ?: return@after
                 val metadata = MediaMetadataCache.putAndGet(mediaMetadata) ?: return@after
 
-                // 只有真正切歌时才清除翻译残留
-                // republishMetadataWithLyricInfo 触发的 setMetadata 不应清除
+                // 用独立变量判断是否真正切歌，避免与 hookMediaSessionForLyricInfo 竞态
                 val newTitle = metadata.title ?: ""
-                val lastTitle = lastMediaMetadata?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: ""
-                if (newTitle != lastTitle) {
+                if (newTitle != lastProcessedTitle && newTitle.isNotBlank()) {
+                    lastProcessedTitle = newTitle
                     cloudTranslationRaw = emptyList()
                     cloudTranslationSongKey = ""
+                    YLog.debug(tag = AM_TAG, msg = "Song changed to '$newTitle', cleared translation cache")
                 }
 
                 // 委托给 Manager 处理
@@ -290,8 +294,20 @@ object Apple : YukiBaseHooker() {
     /**
      * Hook MediaSession.setMetadata()，在元数据中注入 lyricInfo。
      * ColorOS-Live-Lyrics-Bridge 从 MediaSession 元数据读取 lyricInfo 来显示锁屏歌词。
+     *
+     * 使用反射直接修改 MediaMetadata 内部 Bundle，避免创建新对象导致封面丢失。
      */
     private fun hookMediaSessionForLyricInfo() {
+        // 反射获取 MediaMetadata 内部的 Bundle 字段
+        val bundleField = try {
+            MediaMetadata::class.java.getDeclaredField("mBundle").also { it.isAccessible = true }
+        } catch (e: Exception) {
+            // Android 某些版本字段名不同
+            MediaMetadata::class.java.declaredFields.firstOrNull {
+                it.type == android.os.Bundle::class.java
+            }?.also { it.isAccessible = true }
+        }
+
         MediaSession::class.java.getDeclaredMethod("setMetadata", MediaMetadata::class.java)
             .hook {
                 before {
@@ -316,6 +332,16 @@ object Apple : YukiBaseHooker() {
                         // 避免重复注入
                         if (metadata.getString("lyricInfo") == lyricInfo) return@before
 
+                        // 优先用反射直接修改内部 Bundle，保留原始对象引用（封面不丢失）
+                        if (bundleField != null) {
+                            val bundle = bundleField.get(metadata) as? android.os.Bundle
+                            if (bundle != null) {
+                                bundle.putString("lyricInfo", lyricInfo)
+                                return@before
+                            }
+                        }
+
+                        // 回退：用 Builder 创建新对象
                         val patched = MediaMetadata.Builder(metadata)
                             .putString("lyricInfo", lyricInfo)
                             .build()
@@ -395,6 +421,7 @@ object Apple : YukiBaseHooker() {
     private fun republishMetadataWithLyricInfo(song: Song) {
         val session = lastMediaSession ?: return
         val metadata = lastMediaMetadata ?: return
+
         try {
             // 校验：metadata 标题必须匹配当前歌曲
             val metadataTitle = metadata.getString(MediaMetadata.METADATA_KEY_TITLE) ?: ""
