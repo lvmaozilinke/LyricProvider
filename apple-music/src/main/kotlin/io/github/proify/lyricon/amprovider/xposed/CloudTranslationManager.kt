@@ -24,8 +24,14 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 云端歌词翻译管理器。
- * 当 Apple Music 歌词没有翻译时，从 QQ 音乐搜索带翻译的歌词作为回退。
- * 支持磁盘缓存：翻译结果存储到本地文件，后续播放直接读取。
+ *
+ * 核心流程：
+ * 1. 播放歌曲时，检查磁盘缓存是否有效（文件存在 + translations 字段非空）
+ * 2. 无效缓存直接删除，启动后台线程从 QQ 音乐获取
+ * 3. 获取完成后，检查当前播放歌曲是否与下载的一致
+ *    - 一致 → 替换歌词并广播
+ *    - 不一致 → 仅存储到磁盘，不做其他操作
+ * 4. 快速切歌时，每首歌独立创建后台任务，不互相干扰
  */
 object CloudTranslationManager {
     private const val TAG = "CloudTranslation"
@@ -35,10 +41,16 @@ object CloudTranslationManager {
     // 内存缓存：cacheKey -> 云端原始翻译列表 (cloudTimestamp, translationText)
     private val translationCache = ConcurrentHashMap<String, List<Pair<Long, String>>>()
 
+    // 正在执行的下载任务：cacheKey -> Job
+    private val activeJobs = ConcurrentHashMap<String, Job>()
+
+    // 当前正在播放的歌曲 cacheKey（用于下载完成后比对）
+    @Volatile
+    var currentPlayingKey: String = ""
+        private set
+
     private val cloudLyrics = CloudLyrics(listOf(QQMusicProvider()))
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var currentSearchJob: Job? = null
-    private var currentSearchingSongId: String? = null
 
     private var cacheDir: File? = null
 
@@ -50,65 +62,79 @@ object CloudTranslationManager {
     }
 
     /**
-     * 异步搜索云端翻译。
-     * 返回原始云端翻译列表（cloudTimestamp, translationText），不做时间匹配。
-     * 匹配由调用方在 buildLyricInfoJson 时完成。
+     * 异步获取翻译（非阻塞）。
+     *
+     * @param song 当前播放的歌曲
+     * @param onTranslationReady 翻译就绪回调（仅当与当前播放一致时触发）
      */
-    fun fetchTranslationAsync(song: Song, onTranslationReady: (List<Pair<Long, String>>) -> Unit) {
+    fun fetchTranslation(song: Song, onTranslationReady: (List<Pair<Long, String>>) -> Unit) {
         val cacheKey = "${song.name}:${song.artist}"
+        currentPlayingKey = cacheKey
 
-        // 1. 先检查内存缓存
-        if (translationCache.containsKey(cacheKey)) {
-            onTranslationReady(translationCache[cacheKey]!!)
+        // 1. 检查内存缓存
+        translationCache[cacheKey]?.let { translations ->
+            if (translations.isNotEmpty()) {
+                onTranslationReady(translations)
+                return
+            }
+        }
+
+        // 2. 检查磁盘缓存（同步读取，很快）
+        val diskResult = loadFromDisk(cacheKey)
+        if (diskResult != null && diskResult.isNotEmpty()) {
+            translationCache[cacheKey] = diskResult
+            onTranslationReady(diskResult)
+            YLog.debug(tag = TAG, msg = "Loaded valid translation from disk: ${song.name}, ${diskResult.size} lines")
             return
         }
 
-        // 2. 检查磁盘缓存（异步读取）
-        scope.launch {
-            val diskResult = loadFromDisk(cacheKey)
-            if (diskResult != null) {
-                translationCache[cacheKey] = diskResult
-                withContext(Dispatchers.Main) {
-                    onTranslationReady(diskResult)
+        // 3. 无效缓存，删除
+        deleteFromDisk(cacheKey)
+        translationCache.remove(cacheKey)
+
+        // 4. 已有任务在跑同一首歌，跳过
+        if (activeJobs.containsKey(cacheKey) && activeJobs[cacheKey]?.isActive == true) {
+            YLog.debug(tag = TAG, msg = "Already downloading translation for: ${song.name}, skip")
+            return
+        }
+
+        // 5. 启动后台下载任务
+        YLog.debug(tag = TAG, msg = "Starting cloud translation download for: ${song.name}")
+        val job = scope.launch {
+            try {
+                val result = searchCloudTranslation(song)
+                if (result == null || result.isEmpty()) {
+                    YLog.debug(tag = TAG, msg = "No translation found for: ${song.name}")
+                    return@launch
                 }
-                YLog.debug(tag = TAG, msg = "Loaded translation from disk cache for: ${song.name}, ${diskResult.size} lines")
-                return@launch
-            }
 
-            // 3. 磁盘缓存未命中，搜索云端
-            // 如果同一首歌正在搜索中，跳过
-            if (currentSearchingSongId == cacheKey && currentSearchJob?.isActive == true) {
-                YLog.debug(tag = TAG, msg = "Already searching translation for: ${song.name}, skip")
-                return@launch
-            }
+                // 6. 下载完成，检查是否与当前播放一致
+                val isCurrentSong = (currentPlayingKey == cacheKey)
 
-            currentSearchJob?.cancel()
-            currentSearchingSongId = cacheKey
-            currentSearchJob = scope.launch {
-                try {
-                    val result = searchCloudTranslation(song)
-                    if (result != null) {
-                        translationCache[cacheKey] = result
-                        saveToDisk(cacheKey, result)
-                        withContext(Dispatchers.Main) {
-                            onTranslationReady(result)
-                        }
-                        YLog.debug(tag = TAG, msg = "Cloud translation found for ${song.name}: ${result.size} lines")
-                    } else {
-                        YLog.debug(tag = TAG, msg = "No cloud translation found for ${song.name}")
+                // 无论如何都存到磁盘
+                translationCache[cacheKey] = result
+                saveToDisk(cacheKey, result)
+                YLog.debug(tag = TAG, msg = "Translation downloaded for: ${song.name}, ${result.size} lines, isCurrent=$isCurrentSong")
+
+                // 7. 一致才广播
+                if (isCurrentSong) {
+                    withContext(Dispatchers.Main) {
+                        onTranslationReady(result)
                     }
-                } catch (e: Exception) {
-                    YLog.error(tag = TAG, msg = "Cloud translation search failed", e = e)
-                } finally {
-                    currentSearchingSongId = null
+                } else {
+                    YLog.debug(tag = TAG, msg = "Song changed, stored locally without broadcast: ${song.name}")
                 }
+            } catch (e: Exception) {
+                YLog.error(tag = TAG, msg = "Cloud translation download failed for: ${song.name}", e = e)
+            } finally {
+                activeJobs.remove(cacheKey)
             }
         }
+        activeJobs[cacheKey] = job
     }
 
     /**
      * 同步搜索云端翻译（阻塞）。
-     * 用于需要立即获取结果的场景。
      */
     fun fetchTranslationSync(song: Song): List<Pair<Long, String>> {
         val cacheKey = "${song.name}:${song.artist}"
@@ -175,7 +201,7 @@ object CloudTranslationManager {
 
     /**
      * 保存翻译到磁盘。
-     * 文件名：cacheKey 的 MD5 hash
+     * 文件名：cacheKey 的 hashCode
      * 格式：{ "key": "songName:artist", "time": timestamp, "translations": [[time, text], ...] }
      */
     private fun saveToDisk(cacheKey: String, translations: List<Pair<Long, String>>) {
@@ -205,7 +231,8 @@ object CloudTranslationManager {
 
     /**
      * 从磁盘加载翻译。
-     * 检查文件是否存在且未过期。
+     * 检查文件是否存在、未过期、且 translations 字段非空。
+     * 如果文件存在但 translations 为空，删除文件并返回 null。
      */
     private fun loadFromDisk(cacheKey: String): List<Pair<Long, String>>? {
         try {
@@ -223,8 +250,16 @@ object CloudTranslationManager {
                 return null
             }
 
+            // 检查 translations 字段是否存在且非空
+            val jsonArray = json.optJSONArray("translations")
+            if (jsonArray == null || jsonArray.length() == 0) {
+                // 文件存在但翻译为空，删除坏文件
+                file.delete()
+                YLog.debug(tag = TAG, msg = "Translation cache has empty translations, deleted: $cacheKey")
+                return null
+            }
+
             val translations = mutableListOf<Pair<Long, String>>()
-            val jsonArray = json.optJSONArray("translations") ?: return null
             for (i in 0 until jsonArray.length()) {
                 val item = jsonArray.getJSONArray(i)
                 translations.add(Pair(item.getLong(0), item.getString(1)))
@@ -232,8 +267,27 @@ object CloudTranslationManager {
 
             return if (translations.isNotEmpty()) translations else null
         } catch (e: Exception) {
-            YLog.error(tag = TAG, msg = "Failed to load translation from disk", e = e)
+            // JSON 解析失败，删除坏文件
+            try {
+                File(cacheDir, "${cacheKey.hashCode()}.json").delete()
+            } catch (_: Exception) {}
+            YLog.error(tag = TAG, msg = "Failed to load translation from disk, deleted bad file", e = e)
             return null
+        }
+    }
+
+    /**
+     * 删除磁盘缓存。
+     */
+    private fun deleteFromDisk(cacheKey: String) {
+        try {
+            val file = File(cacheDir, "${cacheKey.hashCode()}.json")
+            if (file.exists()) {
+                file.delete()
+                YLog.debug(tag = TAG, msg = "Deleted translation cache: $cacheKey")
+            }
+        } catch (e: Exception) {
+            YLog.error(tag = TAG, msg = "Failed to delete translation cache", e = e)
         }
     }
 
@@ -249,6 +303,8 @@ object CloudTranslationManager {
      */
     fun clearAllCache() {
         translationCache.clear()
+        activeJobs.values.forEach { it.cancel() }
+        activeJobs.clear()
         try {
             cacheDir?.deleteRecursively()
             cacheDir?.mkdirs()
@@ -258,11 +314,11 @@ object CloudTranslationManager {
     }
 
     /**
-     * 取消当前搜索任务。
+     * 取消所有进行中的搜索任务。
+     * 切歌时调用。
      */
-    fun cancelSearch() {
-        currentSearchJob?.cancel()
-        currentSearchJob = null
-        currentSearchingSongId = null
+    fun cancelAllSearches() {
+        activeJobs.values.forEach { it.cancel() }
+        activeJobs.clear()
     }
 }

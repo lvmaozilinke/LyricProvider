@@ -51,6 +51,10 @@ object Apple : YukiBaseHooker() {
     // 云端翻译缓存：云端时间戳 -> 翻译文本（未匹配）
     private var cloudTranslationRaw: List<Pair<Long, String>> = emptyList()
 
+    // 当前 cloudTranslationRaw 对应的歌曲 key（用于校验回调）
+    @Volatile
+    private var cloudTranslationSongKey: String = ""
+
     // MediaSession 引用缓存（用于歌词就绪后重新发布元数据）
     @Volatile
     private var lastMediaSession: MediaSession? = null
@@ -140,14 +144,19 @@ object Apple : YukiBaseHooker() {
                 val mediaMetadata = args[0] as? MediaMetadata ?: return@after
                 val metadata = MediaMetadataCache.putAndGet(mediaMetadata) ?: return@after
 
-                // 切歌时清除上一首歌的云端翻译残留
-                cloudTranslationRaw = emptyList()
-                CloudTranslationManager.cancelSearch()
+                // 只有真正切歌时才清除翻译残留
+                // republishMetadataWithLyricInfo 触发的 setMetadata 不应清除
+                val newTitle = metadata.title ?: ""
+                val lastTitle = lastMediaMetadata?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: ""
+                if (newTitle != lastTitle) {
+                    cloudTranslationRaw = emptyList()
+                    cloudTranslationSongKey = ""
+                }
 
                 // 委托给 Manager 处理
                 PlaybackManager.onSongChanged(metadata.id)
 
-                // 预取云端翻译（异步）
+                // 预取云端翻译（异步，非阻塞）
                 fetchCloudTranslationIfNeeded(mediaMetadata)
             }
         }
@@ -322,24 +331,43 @@ object Apple : YukiBaseHooker() {
     /**
      * 预取云端翻译（异步，非阻塞）。
      * 当 Apple Music 歌词没有翻译时，从 QQ 音乐搜索翻译。
-     * 翻译就绪后仅存储，下次 buildLyricInfoJson 自动使用。
-     * 不主动触发 republish，避免循环调用导致卡死。
+     * 翻译就绪后更新 cloudTranslationRaw 并重新广播歌词到 Bridge。
      */
     private fun fetchCloudTranslationIfNeeded(metadata: MediaMetadata) {
         val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE) ?: return
         val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: return
         val id = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID) ?: return
+        val songKey = "$title:$artist"
 
         // 构建临时 Song 对象用于云端搜索
         val tempSong = Song(id = id, name = title, artist = artist)
 
-        CloudTranslationManager.fetchTranslationAsync(tempSong) { translations ->
-            cloudTranslationRaw = translations
-            if (translations.isNotEmpty()) {
-                YLog.debug(tag = AM_TAG, msg = "Cloud translations stored for: $title, count=${translations.size}")
-                // 不主动触发 republish，下次 metadata 变化时 buildLyricInfoJson 自然会使用新翻译
+        CloudTranslationManager.fetchTranslation(tempSong) { translations ->
+            // 校验：翻译回调时，当前播放是否还是同一首歌
+            if (songKey != currentSongKey()) {
+                YLog.debug(tag = AM_TAG, msg = "Translation callback for stale song '$title', ignore")
+                return@fetchTranslation
+            }
+
+            if (translations.isNotEmpty() && cloudTranslationSongKey != songKey) {
+                // 首次获得此歌的翻译，更新并广播
+                cloudTranslationRaw = translations
+                cloudTranslationSongKey = songKey
+                YLog.debug(tag = AM_TAG, msg = "Cloud translations ready for: $title, count=${translations.size}")
+                val song = PlaybackManager.getCurrentSong()
+                if (song != null) {
+                    republishMetadataWithLyricInfo(song)
+                }
             }
         }
+    }
+
+    /**
+     * 获取当前歌曲的 key（用于校验翻译回调）。
+     */
+    private fun currentSongKey(): String {
+        val song = PlaybackManager.getCurrentSong() ?: return ""
+        return "${song.name}:${song.artist}"
     }
 
     /**
