@@ -10,6 +10,7 @@
           <set>
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/163-music" />
+            <option value="$PROJECT_DIR$/amcfy-music" />
             <option value="$PROJECT_DIR$/apple-music" />
             <option value="$PROJECT_DIR$/car-provider" />
             <option value="$PROJECT_DIR$/cloud-provider" />

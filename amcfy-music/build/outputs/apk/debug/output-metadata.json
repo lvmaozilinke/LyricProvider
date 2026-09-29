@@ -1,0 +1,21 @@
+{
+  "version": 3,
+  "artifactType": {
+    "type": "APK",
+    "kind": "Directory"
+  },
+  "applicationId": "io.github.proify.lyricon.amcfyprovider",
+  "variantName": "debug",
+  "elements": [
+    {
+      "type": "SINGLE",
+      "filters": [],
+      "attributes": [],
+      "versionCode": 1,
+      "versionName": "1.0.0",
+      "outputFile": "amcfy-music-debug.apk"
+    }
+  ],
+  "elementType": "File",
+  "minSdkVersionForDexing": 28
+}

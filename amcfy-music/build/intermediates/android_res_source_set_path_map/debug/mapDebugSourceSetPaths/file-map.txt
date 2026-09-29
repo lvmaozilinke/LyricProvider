@@ -1,0 +1,7 @@
+io.github.proify.lyricon.amcfyprovider.amcfy-music-pngs-0 C:\Users\WETALWAX\Documents\amcfyMusic\LyricProvider\amcfy-music\build\generated\res\pngs\debug
+io.github.proify.lyricon.amcfyprovider.amcfy-music-updated_navigation_xml-1 C:\Users\WETALWAX\Documents\amcfyMusic\LyricProvider\amcfy-music\build\generated\updated_navigation_xml\debug
+io.github.proify.lyricon.amcfyprovider.amcfy-music-packageDebugResources-2 C:\Users\WETALWAX\Documents\amcfyMusic\LyricProvider\amcfy-music\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+io.github.proify.lyricon.amcfyprovider.amcfy-music-packageDebugResources-3 C:\Users\WETALWAX\Documents\amcfyMusic\LyricProvider\amcfy-music\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+io.github.proify.lyricon.amcfyprovider.amcfy-music-debug-4 C:\Users\WETALWAX\Documents\amcfyMusic\LyricProvider\amcfy-music\build\intermediates\merged_res\debug\mergeDebugResources
+io.github.proify.lyricon.amcfyprovider.amcfy-music-debug-5 C:\Users\WETALWAX\Documents\amcfyMusic\LyricProvider\amcfy-music\src\debug\res
+io.github.proify.lyricon.amcfyprovider.amcfy-music-main-6 C:\Users\WETALWAX\Documents\amcfyMusic\LyricProvider\amcfy-music\src\main\res

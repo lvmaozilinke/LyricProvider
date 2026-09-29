@@ -48,6 +48,7 @@ include(":meizu-provider")
 include(":car-provider")
 
 include(":apple-music")
+include(":amcfy-music")
 include(":163-music")
 include(":qq-music")
 include(":qq-music-hd")

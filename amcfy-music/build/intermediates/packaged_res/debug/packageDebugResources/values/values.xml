@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="lyricon_module_tags">
+        <item>$syllable</item>
+        <item>$translation</item>
+    </string-array>
+    <string-array name="xposed_scope">
+        <item>com.sumsg.musichub</item>
+    </string-array>
+    <color name="ic_launcher_background">#FF4C8DFF</color>
+    <string name="app_name">Amcfy Music (箭头音乐) Provider</string>
+    <string name="lyricon_module_description">Provide Amcfy Music lyrics</string>
+    <string name="xposed_description">Provide Amcfy Music (箭头音乐) lyrics for Lyricon</string>
+    <style name="Theme.AMProvider" parent="android:Theme.Material.Light.NoActionBar"/>
+</resources>

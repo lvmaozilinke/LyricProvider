@@ -1,0 +1,22 @@
+[
+    {
+        "merged": "io.github.proify.lyricon.amcfyprovider.amcfy-music-debug-43:/xml_data_extraction_rules.xml.flat",
+        "source": "io.github.proify.lyricon.amcfyprovider.amcfy-music-main-45:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "io.github.proify.lyricon.amcfyprovider.amcfy-music-debug-43:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "io.github.proify.lyricon.amcfyprovider.amcfy-music-main-45:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "io.github.proify.lyricon.amcfyprovider.amcfy-music-debug-43:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "io.github.proify.lyricon.amcfyprovider.amcfy-music-main-45:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "io.github.proify.lyricon.amcfyprovider.amcfy-music-debug-43:/drawable_ic_launcher_foreground.xml.flat",
+        "source": "io.github.proify.lyricon.amcfyprovider.amcfy-music-main-45:/drawable/ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "io.github.proify.lyricon.amcfyprovider.amcfy-music-debug-43:/xml_backup_rules.xml.flat",
+        "source": "io.github.proify.lyricon.amcfyprovider.amcfy-music-main-45:/xml/backup_rules.xml"
+    }
+]
